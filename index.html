@@ -111,6 +111,7 @@ function breakdownText(amount) {
 
 // 釣り銭予測: 合計から「お客が出しうる金額」の候補を作る
 //  (1) ぴったり (2) 各単位への切り上げ (3) お釣りが1〜2枚になるよう小銭を足した額
+//  (4) 紙幣＋端数の小銭（例: 2,750円に5,000円札＋50円玉＝5,050円）
 function predict(total) {
   if (!Number.isFinite(total) || total <= 0) return [];
   const cand = new Set();
@@ -133,6 +134,10 @@ function predict(total) {
     if (t % 10 !== 0) continue;              // 1円・5円単位の端数は出さない
     if (t <= cap && pieceCount(t) <= 7) add(t); // 手渡す側の枚数が多すぎる額は除く
   }
+  for (const B of [1000, 5000, 10000]) {
+    const t = B + (total % 100);
+    if (t > total) cand.add(t);
+  }
 
   const list = [...cand].map(t => ({
     tendered: t,
@@ -142,7 +147,7 @@ function predict(total) {
   // お釣りの枚数が少ない順 → お釣りが少ない順
   list.sort((a, b) =>
     a.changePieces - b.changePieces || a.change - b.change || a.tendered - b.tendered);
-  return list.slice(0, 12);
+  return list.slice(0, 20);
 }
 
 let totalStr = "";
