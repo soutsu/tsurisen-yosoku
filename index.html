@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>釣り銭予測</title>
+<style>
+  :root {
+    --bg: #f6f3ec;
+    --card: #ffffff;
+    --ink: #2b2620;
+    --muted: #8a8175;
+    --accent: #e07b1f;
+    --accent-soft: #fdf0e0;
+    --line: #e5ded0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    padding: 20px 14px 40px;
+  }
+  .wrap { max-width: 520px; margin: 0 auto; }
+  h1 { font-size: 22px; text-align: center; letter-spacing: .08em; }
+  .sub { text-align: center; color: var(--muted); font-size: 13px; margin: 6px 0 18px; }
+
+  .total-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px 18px; margin-bottom: 14px;
+  }
+  .total-label { font-size: 13px; color: var(--muted); }
+  .total-amount { font-size: 40px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+  .total-amount .yen { font-size: 20px; margin-left: 2px; }
+
+  .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 18px; }
+  .keypad button {
+    font-size: 20px; padding: 13px 0; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--card); color: var(--ink); cursor: pointer; font-variant-numeric: tabular-nums;
+  }
+  .keypad button:active { background: var(--accent-soft); }
+  .keypad button.fn { font-size: 15px; color: var(--muted); }
+
+  h2 { font-size: 15px; margin: 4px 0 10px; color: var(--ink); }
+  .empty { color: var(--muted); font-size: 14px; text-align: center; padding: 22px 0; }
+  .cand {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 14px; margin-bottom: 9px;
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  }
+  .cand.best { border-color: var(--accent); background: var(--accent-soft); }
+  .cand .tendered { font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .cand .tendered small { font-size: 12px; color: var(--muted); font-weight: 400; display: block; margin-top: 2px; }
+  .cand .change { text-align: right; }
+  .cand .change .amt { font-size: 17px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .cand .change small { font-size: 12px; color: var(--muted); display: block; margin-top: 2px; }
+  .badge {
+    display: inline-block; font-size: 11px; color: #fff; background: var(--accent);
+    border-radius: 999px; padding: 1px 8px; margin-left: 6px; vertical-align: 3px;
+  }
+  .badge.exact { background: #5b8c5a; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 22px; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>釣り銭予測</h1>
+  <p class="sub">合計を入れるだけ。お客さんが出しそうな金額とお釣りを先に一覧で出します。</p>
+
+  <div class="total-card">
+    <div class="total-label">合計金額</div>
+    <div class="total-amount"><span id="total">0</span><span class="yen">円</span></div>
+  </div>
+
+  <div class="keypad" id="keypad">
+    <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+    <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+    <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+    <button data-k="0">0</button><button data-k="00">00</button><button class="fn" data-k="bs">1桁消す</button>
+    <button class="fn" data-k="c" style="grid-column: 1 / -1;">クリア</button>
+  </div>
+
+  <h2>お客さんが出しそうな金額</h2>
+  <div id="list"><p class="empty">合計金額を入力してください</p></div>
+
+  <footer>
+    並び順は「お釣りの枚数が少ない順」です。小銭を足して出す払い方（例：2,750円に3,300円）も候補に入ります。<br>
+    同人誌即売会レジ「どびん」の釣り銭予測を単体で試せるデモです。
+  </footer>
+</div>
+
+<script>
+const DENOMS = [10000, 5000, 1000, 500, 100, 50, 10, 5, 1];
+
+function breakdown(amount) {
+  const res = [];
+  let rest = amount;
+  for (const d of DENOMS) {
+    const n = Math.floor(rest / d);
+    if (n > 0) { res.push([d, n]); rest -= d * n; }
+  }
+  return res;
+}
+function pieceCount(amount) {
+  return breakdown(amount).reduce((s, p) => s + p[1], 0);
+}
+function breakdownText(amount) {
+  if (amount === 0) return "なし";
+  return breakdown(amount).map(([d, n]) => d.toLocaleString() + "円×" + n).join("・");
+}
+
+// 釣り銭予測: 合計から「お客が出しうる金額」の候補を作る
+//  (1) ぴったり (2) 各単位への切り上げ (3) お釣りが1〜2枚になるよう小銭を足した額
+function predict(total) {
+  if (!Number.isFinite(total) || total <= 0) return [];
+  const cand = new Set();
+  const cap = Math.ceil(total / 10000) * 10000; // 1万円への切り上げまで
+  const add = t => { if (t >= total && t <= cap) cand.add(t); };
+
+  add(total);
+  for (const u of [10, 50, 100, 500, 1000, 2000, 5000, 10000]) {
+    add(Math.ceil(total / u) * u);
+  }
+  const BIG = [5000, 1000, 500, 100, 50, 10];
+  const changes = new Set();
+  for (const a of BIG) {
+    changes.add(a);
+    for (const b of BIG) { if (b <= a) changes.add(a + b); }
+  }
+  for (const c of changes) {
+    if (c <= 0 || c > 5000) continue;
+    const t = total + c;
+    if (t % 10 !== 0) continue;              // 1円・5円単位の端数は出さない
+    if (t <= cap && pieceCount(t) <= 7) add(t); // 手渡す側の枚数が多すぎる額は除く
+  }
+
+  const list = [...cand].map(t => ({
+    tendered: t,
+    change: t - total,
+    changePieces: pieceCount(t - total)
+  }));
+  // お釣りの枚数が少ない順 → お釣りが少ない順
+  list.sort((a, b) =>
+    a.changePieces - b.changePieces || a.change - b.change || a.tendered - b.tendered);
+  return list.slice(0, 12);
+}
+
+let totalStr = "";
+const totalEl = document.getElementById("total");
+const listEl = document.getElementById("list");
+
+function render() {
+  const total = parseInt(totalStr || "0", 10);
+  totalEl.textContent = total.toLocaleString();
+  const cands = predict(total);
+  if (cands.length === 0) {
+    listEl.innerHTML = '<p class="empty">合計金額を入力してください</p>';
+    return;
+  }
+  listEl.innerHTML = cands.map((c, i) => {
+    const isExact = c.change === 0;
+    const badge = isExact
+      ? '<span class="badge exact">ぴったり</span>'
+      : (i === 1 ? '<span class="badge">おすすめ</span>' : "");
+    return '<div class="cand' + (i === 1 ? " best" : "") + '">' +
+      '<div class="tendered">' + c.tendered.toLocaleString() + '円' + badge +
+        '<small>出すお金: ' + breakdownText(c.tendered) + '</small></div>' +
+      '<div class="change"><span class="amt">お釣り ' + c.change.toLocaleString() + '円</span>' +
+        '<small>' + (isExact ? "お釣りなし" : breakdownText(c.change) + "（" + c.changePieces + "枚）") + '</small></div>' +
+      '</div>';
+  }).join("");
+}
+
+document.getElementById("keypad").addEventListener("click", e => {
+  const k = e.target.dataset && e.target.dataset.k;
+  if (!k) return;
+  if (k === "c") totalStr = "";
+  else if (k === "bs") totalStr = totalStr.slice(0, -1);
+  else {
+    if (totalStr.length + k.length > 7) return;
+    totalStr = (totalStr + k).replace(/^0+(?=\d)/, "");
+  }
+  render();
+});
+
+render();
+</script>
+</body>
+</html>
