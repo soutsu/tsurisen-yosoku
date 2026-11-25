@@ -104,6 +104,9 @@ function breakdown(amount) {
 function pieceCount(amount) {
   return breakdown(amount).reduce((s, p) => s + p[1], 0);
 }
+function denomCount(amount) {
+  return breakdown(amount).length;
+}
 function breakdownText(amount) {
   if (amount === 0) return "なし";
   return breakdown(amount).map(([d, n]) => d.toLocaleString() + "円×" + n).join("・");
@@ -132,7 +135,9 @@ function predict(total) {
     if (c <= 0 || c > 5000) continue;
     const t = total + c;
     if (t % 10 !== 0) continue;              // 1円・5円単位の端数は出さない
-    if (t <= cap && pieceCount(t) <= 7) add(t); // 手渡す側の枚数が多すぎる額は除く
+    // 手渡す側が「実際に人が組める形」だけ残す: 枚数7枚まで、金種3種類まで
+    // （例: 2,810円＝1000×2+500+100×3+10 は金種が多すぎて誰も出さない）
+    if (t <= cap && pieceCount(t) <= 7 && denomCount(t) <= 3) add(t);
   }
   for (const B of [1000, 5000, 10000]) {
     const t = B + (total % 100);
